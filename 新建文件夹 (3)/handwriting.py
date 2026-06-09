@@ -33,7 +33,7 @@ def create_background(line_spacing, margin_top=None):
 
 def wrap_text_pixel(text, font, indent_px):
     """像素级换行：用给定字体测量宽度，每行填到接近右边界"""
-    usable_w = int((IMG_WIDTH - MARGIN_LEFT - MARGIN_RIGHT) * 0.92)  # 8%安全余量，因为渲染时混合字体会更宽
+    usable_w = IMG_WIDTH - MARGIN_LEFT - MARGIN_RIGHT
     all_lines = []
 
     for paragraph in text.split("\n"):
@@ -129,23 +129,27 @@ def render_page(lines, page_num, fonts, main_name, output_dir,
     return output_path
 
 
-def calc_layout(text, page_count):
+def calc_layout(text, page_count, main_font_name="李国夫手写体"):
     """二分查找最佳字号以塞进指定页数"""
     if page_count <= 0:
-        return DEFAULT_FONT_SIZE, 90, MARGIN_TOP
+        return DEFAULT_FONT_SIZE, 90, MARGIN_TOP, int((IMG_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM) / 90)
 
-    indent = int(DEFAULT_FONT_SIZE * 0.85)
-    lo, hi = 18, 75
+    lo, hi = 18, 200
     best = lo
 
-    for _ in range(20):
+    for _ in range(25):
         mid = (lo + hi) // 2
         line_h = int(mid * 1.45)
         lpp = max(1, (IMG_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM) // line_h)
 
+        # 用主字体测量宽度，保证和 generate 一致
         try:
-            font = ImageFont.truetype(str(next(FONT_DIR.glob("*.ttf"))), size=mid)
-            lines = wrap_text_pixel(text, font, indent * mid // DEFAULT_FONT_SIZE)
+            font_path = FONT_DIR / f"{main_font_name}.ttf"
+            if not font_path.exists():
+                font_path = next(FONT_DIR.glob("*.ttf"))
+            font = ImageFont.truetype(str(font_path), size=mid)
+            indent_px = int(mid * 0.85)
+            lines = wrap_text_pixel(text, font, indent_px)
             if len(lines) <= page_count * lpp:
                 best = mid
                 lo = mid + 1
@@ -156,8 +160,8 @@ def calc_layout(text, page_count):
 
     line_h = int(best * 1.45)
     lpp = max(1, (IMG_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM) // line_h)
-    print(f"自适应字号: {best}px, 每页约 {lpp} 行")
-    return best, line_h, MARGIN_TOP
+    print(f"自适应字号: {best}px, 每页 {lpp} 行")
+    return best, line_h, MARGIN_TOP, lpp
 
 
 def generate(text, output_dir, main_font="李国夫手写体", page_count=0):
@@ -168,7 +172,7 @@ def generate(text, output_dir, main_font="李国夫手写体", page_count=0):
         print("错误：没有有效文本内容")
         return 0
 
-    font_size, line_spacing, margin_top = calc_layout(text, page_count)
+    font_size, line_spacing, margin_top, lpp = calc_layout(text, page_count, main_font)
     lpp = max(1, (IMG_HEIGHT - margin_top - MARGIN_BOTTOM) // line_spacing)
 
     # 加载字体
@@ -179,7 +183,7 @@ def generate(text, output_dir, main_font="李国夫手写体", page_count=0):
         except Exception:
             pass
     main_name = main_font if main_font in fonts else list(fonts.keys())[0]
-    print(f"字号 {font_size}px, 主字体: {main_name}")
+    print(f"字号 {font_size}px, 主字体: {main_name}, 每页 {lpp} 行")
 
     # 用主字体进行像素级换行
     indent_px = int(font_size * 0.85)
@@ -190,21 +194,21 @@ def generate(text, output_dir, main_font="李国夫手写体", page_count=0):
     # 分页
     pages = []
     for start in range(0, len(all_lines), lpp):
-        pages.append(all_lines[start : start + lpp])
-    while page_count > 0 and len(pages) < page_count:
-        pages.append([])
+        page_lines = all_lines[start : start + lpp]
+        if page_count > 0 and len(pages) >= page_count:
+            break
+        pages.append(page_lines)
 
     for i, page_lines in enumerate(pages):
-        if page_count > 0 and i >= page_count:
-            break
         path = render_page(page_lines, i + 1, fonts, main_name, output_dir,
                           font_size, line_spacing, margin_top)
         print(f"第 {i+1}/{len(pages)} 页: {path}")
 
-    print(f"完成！共 {len(pages)} 页，保存在 {output_dir}")
+    actual = len(pages)
+    print(f"完成！共 {actual} 页，保存在 {output_dir}")
     if sys.platform == "win32":
         os.startfile(str(output_dir))
-    return len(pages)
+    return actual
 
 
 def run_gui():
